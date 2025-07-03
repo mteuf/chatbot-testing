@@ -7,19 +7,17 @@ import threading
 st.set_page_config(page_title="Field Staff Chatbot")
 st.title("Field Staff Chatbot")
 
-# initialize chat history
+# initialize chat state
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# track feedback state
 if "pending_feedback" not in st.session_state:
     st.session_state.pending_feedback = None
 
-# track pending question for immediate UI update
-if "pending_question" not in st.session_state:
-    st.session_state.pending_question = None
+if "pending_answer" not in st.session_state:
+    st.session_state.pending_answer = False
 
-# fire-and-forget feedback storage
+# threaded fire-and-forget for feedback
 def store_feedback(question, answer, score, comment, category):
     try:
         conn = databricks.sql.connect(
@@ -49,10 +47,10 @@ def store_feedback(question, answer, score, comment, category):
 # handle new user input
 if user_input := st.chat_input("Ask a question..."):
     st.session_state.messages.append({"role": "user", "content": user_input})
-    st.session_state.pending_question = user_input
+    st.session_state.pending_answer = True
     st.experimental_rerun()
 
-# render messages immediately, including new user question
+# render the chat messages (user message shows *immediately*)
 if st.session_state.messages:
     just_submitted_feedback = False
 
@@ -112,11 +110,9 @@ if st.session_state.messages:
             if feedback_status in ["thumbs_up", "thumbs_down"] or just_submitted_feedback:
                 st.success("🎉 Thanks for your feedback!")
 
-# process the pending question after rendering
-if st.session_state.pending_question:
-    question_to_send = st.session_state.pending_question
-    st.session_state.pending_question = None  # clear so it doesn't loop
-
+# if there is a pending answer, call the model after showing the question
+if st.session_state.pending_answer:
+    st.session_state.pending_answer = False  # clear so it only runs once
     payload = {"messages": st.session_state.messages}
     headers = {
         "Authorization": f"Bearer {st.secrets['DATABRICKS_PAT']}",
