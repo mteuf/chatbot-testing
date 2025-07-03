@@ -74,7 +74,7 @@ if user_input := st.chat_input("Ask a question..."):
 
     st.session_state.messages.append({"role": "assistant", "content": reply})
 
-# Display chat
+# Only process if there are messages
 if st.session_state.messages:
     just_submitted_feedback = False
 
@@ -101,60 +101,53 @@ if st.session_state.messages:
 
                 if thumbs_up:
                     st.session_state[feedback_key] = "thumbs_up"
+                    st.session_state.pending_feedback = idx  # trigger follow-up comment form
                     just_submitted_feedback = True
                     st.toast("✅ Your positive feedback was recorded!")
-
                     threading.Thread(
                         target=store_feedback,
                         args=(question, msg["content"], "thumbs_up", "", "")
                     ).start()
 
-                    # ask for optional positive comments
-                    st.session_state.pending_feedback = idx
-
                 if thumbs_down:
-                    st.session_state.pending_feedback = idx
+                    st.session_state[feedback_key] = "thumbs_down"
+                    st.session_state.pending_feedback = idx  # trigger follow-up comment form
 
-            if st.session_state.pending_feedback == idx and feedback_status == "thumbs_down":
-                # negative follow-up
-                with st.form(f"thumbs_down_form_{idx}"):
-                    st.subheader("Sorry about that — how can we improve?")
-                    feedback_category = st.selectbox(
-                        "What type of issue best describes the problem?",
-                        ["inaccurate", "outdated", "too long", "too short", "other"],
-                        key=f"category_{idx}"
-                    )
-                    feedback_comment = st.text_area("What could be better?", key=f"comment_{idx}")
-                    submitted_down = st.form_submit_button("Submit Feedback 👎")
+            if st.session_state.pending_feedback == idx:
+                # thumbs down needs category, thumbs up does not
+                if st.session_state.get(feedback_key) == "thumbs_down":
+                    with st.form(f"thumbs_down_form_{idx}"):
+                        st.subheader("Sorry about that — how can we improve?")
+                        feedback_category = st.selectbox(
+                            "What type of issue best describes the problem?",
+                            ["inaccurate", "outdated", "too long", "too short", "other"],
+                            key=f"category_{idx}"
+                        )
+                        feedback_comment = st.text_area("What could be better?", key=f"comment_{idx}")
+                        submitted_down = st.form_submit_button("Submit Feedback 👎")
 
-                    if submitted_down:
-                        st.session_state.pending_feedback = None
-                        st.success("🎉 Thanks for your feedback!")
-                        threading.Thread(
-                            target=store_feedback,
-                            args=(question, msg["content"], "thumbs_down", feedback_comment, feedback_category)
-                        ).start()
-                        just_submitted_feedback = True
+                        if submitted_down:
+                            st.session_state.pending_feedback = None
+                            st.toast("✅ Your feedback was recorded!")
+                            threading.Thread(
+                                target=store_feedback,
+                                args=(question, msg["content"], "thumbs_down", feedback_comment, feedback_category)
+                            ).start()
+                            just_submitted_feedback = True
+                elif st.session_state.get(feedback_key) == "thumbs_up":
+                    with st.form(f"thumbs_up_form_{idx}"):
+                        st.subheader("Thanks for the thumbs up! Any extra comments?")
+                        feedback_comment = st.text_area("Any additional thoughts?", key=f"comment_{idx}")
+                        submitted_up = st.form_submit_button("Submit Feedback 👍")
 
-            if st.session_state.pending_feedback == idx and feedback_status == "thumbs_up":
-                # positive follow-up
-                with st.form(f"thumbs_up_form_{idx}"):
-                    st.subheader("Thanks for the thumbs up! Any extra comments?")
-                    positive_comment = st.text_area(
-                        "What did you find most helpful?",
-                        key=f"positive_comment_{idx}"
-                    )
-                    submitted_up = st.form_submit_button("Submit Extra Feedback 👍")
-
-                    if submitted_up:
-                        st.session_state.pending_feedback = None
-                        st.success("🎉 Thanks for letting us know!")
-                        threading.Thread(
-                            target=store_feedback,
-                            args=(question, msg["content"], "thumbs_up", positive_comment, "positive")
-                        ).start()
-                        just_submitted_feedback = True
+                        if submitted_up:
+                            st.session_state.pending_feedback = None
+                            st.toast("✅ Thanks for sharing more detail!")
+                            threading.Thread(
+                                target=store_feedback,
+                                args=(question, msg["content"], "thumbs_up", feedback_comment, "")
+                            ).start()
+                            just_submitted_feedback = True
 
             if feedback_status in ["thumbs_up", "thumbs_down"] or just_submitted_feedback:
                 st.success("🎉 Thanks for your feedback!")
-
