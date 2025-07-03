@@ -7,17 +7,14 @@ import threading
 st.set_page_config(page_title="Field Staff Chatbot")
 st.title("Field Staff Chatbot")
 
-# initialize chat state
+# Initialize chat history
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 if "pending_feedback" not in st.session_state:
     st.session_state.pending_feedback = None
 
-if "pending_answer" not in st.session_state:
-    st.session_state.pending_answer = False
-
-# threaded fire-and-forget for feedback
+# Function to store feedback in a background thread
 def store_feedback(question, answer, score, comment, category):
     try:
         conn = databricks.sql.connect(
@@ -44,75 +41,10 @@ def store_feedback(question, answer, score, comment, category):
     except Exception as e:
         print(f"⚠️ Could not store feedback: {e}")
 
-# handle new user input
+# Handle user input
 if user_input := st.chat_input("Ask a question..."):
     st.session_state.messages.append({"role": "user", "content": user_input})
-    st.session_state.pending_answer = True
-    st.experimental_rerun()
 
-# render the chat messages (user message shows *immediately*)
-if st.session_state.messages:
-    just_submitted_feedback = False
-
-    for idx, msg in enumerate(st.session_state.messages):
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-        if msg["role"] == "assistant":
-            question_idx = idx - 1
-            question = (
-                st.session_state.messages[question_idx]["content"]
-                if question_idx >= 0 and st.session_state.messages[question_idx]["role"] == "user"
-                else ""
-            )
-            feedback_key = f"feedback_{idx}"
-            feedback_status = st.session_state.get(feedback_key, "none")
-
-            if feedback_status == "none":
-                st.write("Was this answer helpful?")
-                col1, col2 = st.columns(2)
-                thumbs_up = col1.button("👍 Yes", key=f"thumbs_up_{idx}")
-                thumbs_down = col2.button("👎 No", key=f"thumbs_down_{idx}")
-
-                if thumbs_up:
-                    st.session_state[feedback_key] = "thumbs_up"
-                    just_submitted_feedback = True
-                    st.toast("✅ Your positive feedback was recorded!")
-                    threading.Thread(
-                        target=store_feedback,
-                        args=(question, msg["content"], "thumbs_up", "", "")
-                    ).start()
-
-                if thumbs_down:
-                    st.session_state.pending_feedback = idx
-
-            if st.session_state.pending_feedback == idx:
-                with st.form(f"thumbs_down_form_{idx}"):
-                    st.subheader("Sorry about that — how can we improve?")
-                    feedback_category = st.selectbox(
-                        "What type of issue best describes the problem?",
-                        ["inaccurate", "outdated", "too long", "too short", "other"],
-                        key=f"category_{idx}"
-                    )
-                    feedback_comment = st.text_area("What could be better?", key=f"comment_{idx}")
-                    submitted_down = st.form_submit_button("Submit Feedback 👎")
-
-                    if submitted_down:
-                        st.session_state[feedback_key] = "thumbs_down"
-                        st.session_state.pending_feedback = None
-                        just_submitted_feedback = True
-                        st.toast("✅ Your feedback was recorded!")
-                        threading.Thread(
-                            target=store_feedback,
-                            args=(question, msg["content"], "thumbs_down", feedback_comment, feedback_category)
-                        ).start()
-
-            if feedback_status in ["thumbs_up", "thumbs_down"] or just_submitted_feedback:
-                st.success("🎉 Thanks for your feedback!")
-
-# if there is a pending answer, call the model after showing the question
-if st.session_state.pending_answer:
-    st.session_state.pending_answer = False  # clear so it only runs once
     payload = {"messages": st.session_state.messages}
     headers = {
         "Authorization": f"Bearer {st.secrets['DATABRICKS_PAT']}",
@@ -141,4 +73,88 @@ if st.session_state.pending_answer:
         reply = f"❌ Connection error: {e}"
 
     st.session_state.messages.append({"role": "assistant", "content": reply})
-    st.experimental_rerun()
+
+# Display chat
+if st.session_state.messages:
+    just_submitted_feedback = False
+
+    for idx, msg in enumerate(st.session_state.messages):
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+        if msg["role"] == "assistant":
+            question_idx = idx - 1
+            question = (
+                st.session_state.messages[question_idx]["content"]
+                if question_idx >= 0 and st.session_state.messages[question_idx]["role"] == "user"
+                else ""
+            )
+
+            feedback_key = f"feedback_{idx}"
+            feedback_status = st.session_state.get(feedback_key, "none")
+
+            if feedback_status == "none":
+                st.write("Was this answer helpful?")
+                col1, col2 = st.columns(2)
+                thumbs_up = col1.button("👍 Yes", key=f"thumbs_up_{idx}")
+                thumbs_down = col2.button("👎 No", key=f"thumbs_down_{idx}")
+
+                if thumbs_up:
+                    st.session_state[feedback_key] = "thumbs_up"
+                    just_submitted_feedback = True
+                    st.toast("✅ Your positive feedback was recorded!")
+
+                    threading.Thread(
+                        target=store_feedback,
+                        args=(question, msg["content"], "thumbs_up", "", "")
+                    ).start()
+
+                    # ask for optional positive comments
+                    st.session_state.pending_feedback = idx
+
+                if thumbs_down:
+                    st.session_state.pending_feedback = idx
+
+            if st.session_state.pending_feedback == idx and feedback_status == "thumbs_down":
+                # negative follow-up
+                with st.form(f"thumbs_down_form_{idx}"):
+                    st.subheader("Sorry about that — how can we improve?")
+                    feedback_category = st.selectbox(
+                        "What type of issue best describes the problem?",
+                        ["inaccurate", "outdated", "too long", "too short", "other"],
+                        key=f"category_{idx}"
+                    )
+                    feedback_comment = st.text_area("What could be better?", key=f"comment_{idx}")
+                    submitted_down = st.form_submit_button("Submit Feedback 👎")
+
+                    if submitted_down:
+                        st.session_state.pending_feedback = None
+                        st.success("🎉 Thanks for your feedback!")
+                        threading.Thread(
+                            target=store_feedback,
+                            args=(question, msg["content"], "thumbs_down", feedback_comment, feedback_category)
+                        ).start()
+                        just_submitted_feedback = True
+
+            if st.session_state.pending_feedback == idx and feedback_status == "thumbs_up":
+                # positive follow-up
+                with st.form(f"thumbs_up_form_{idx}"):
+                    st.subheader("Thanks for the thumbs up! Any extra comments?")
+                    positive_comment = st.text_area(
+                        "What did you find most helpful?",
+                        key=f"positive_comment_{idx}"
+                    )
+                    submitted_up = st.form_submit_button("Submit Extra Feedback 👍")
+
+                    if submitted_up:
+                        st.session_state.pending_feedback = None
+                        st.success("🎉 Thanks for letting us know!")
+                        threading.Thread(
+                            target=store_feedback,
+                            args=(question, msg["content"], "thumbs_up", positive_comment, "positive")
+                        ).start()
+                        just_submitted_feedback = True
+
+            if feedback_status in ["thumbs_up", "thumbs_down"] or just_submitted_feedback:
+                st.success("🎉 Thanks for your feedback!")
+
