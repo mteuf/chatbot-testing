@@ -8,7 +8,7 @@ st.set_page_config(page_title="Field Staff Chatbot")
 st.title("Field Staff Chatbot")
 
 # --- SAFE RERUN HANDLER ---
-if st.session_state.get("trigger_rerun", False):
+if "trigger_rerun" in st.session_state and st.session_state.trigger_rerun:
     st.session_state.trigger_rerun = False
     st.experimental_rerun()
 
@@ -53,7 +53,7 @@ just_submitted_feedback = False
 if user_input := st.chat_input("Ask a question..."):
     st.session_state.messages.append({"role": "user", "content": user_input})
 
-    # show conversation immediately including the question
+    # show conversation so far including question
     for idx, msg in enumerate(st.session_state.messages):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
@@ -108,7 +108,7 @@ if user_input := st.chat_input("Ask a question..."):
             if feedback_status in ["thumbs_up", "thumbs_down"] or just_submitted_feedback:
                 st.success("🎉 Thanks for your feedback!")
 
-    # get assistant reply with spinner
+    # after showing question, get reply with spinner
     with st.spinner("Getting reply..."):
         payload = {"messages": st.session_state.messages}
         headers = {
@@ -138,11 +138,9 @@ if user_input := st.chat_input("Ask a question..."):
             reply = f"❌ Connection error: {e}"
 
         st.session_state.messages.append({"role": "assistant", "content": reply})
-
-        # trigger rerun to show reply immediately
         st.session_state.trigger_rerun = True
 
-# replay conversation on reruns
+# replay on reruns
 if st.session_state.messages:
     just_submitted_feedback = False
     for idx, msg in enumerate(st.session_state.messages):
