@@ -5,7 +5,7 @@ import databricks.sql
 import threading
 
 st.set_page_config(page_title="Field Staff Chatbot")
-st.title("Field Staff Chatbot 4")
+st.title("Field Staff Chatbot 5")
 
 # -----------------------------
 # Session state
@@ -59,10 +59,7 @@ def stream_databricks_chat(messages):
         "Accept": "text/event-stream",
         "Connection": "keep-alive",
     }
-    payload = {
-        "messages": messages,
-        "stream": True,
-    }
+    payload = {"messages": messages, "stream": True}
 
     try:
         with requests.post(url, headers=headers, json=payload, stream=True, timeout=300) as r:
@@ -77,8 +74,6 @@ def stream_databricks_chat(messages):
                     obj = json.loads(data)
                 except json.JSONDecodeError:
                     continue
-
-                # OpenAI-style delta first; fall back to common alternates
                 try:
                     delta = obj["choices"][0].get("delta") or obj["choices"][0].get("message") or {}
                     piece = delta.get("content") or ""
@@ -92,13 +87,11 @@ def stream_databricks_chat(messages):
         yield f"\n\n❌ Connection error while streaming: {e}"
 
 # -----------------------------
-# Helper: render one message + its feedback UI (if assistant)
+# Feedback renderers
 # -----------------------------
-def render_message_with_feedback(idx: int):
+def render_feedback_inline(idx: int):
+    """Show feedback UI ONLY (no message content); call this right after streaming."""
     msg = st.session_state.messages[idx]
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-
     if msg["role"] != "assistant":
         return
 
@@ -159,6 +152,15 @@ def render_message_with_feedback(idx: int):
                     ).start()
                     st.success("🎉 Thanks for your feedback!")
 
+def render_message_with_feedback(idx: int):
+    """Render a message and, if assistant, its feedback UI (used for history only)."""
+    msg = st.session_state.messages[idx]
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+        if msg["role"] == "assistant":
+            # Reuse inline renderer inside the same bubble
+            render_feedback_inline(idx)
+
 # -----------------------------
 # Input
 # -----------------------------
@@ -169,28 +171,25 @@ if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
 
 # -----------------------------
-# Render existing history (except a *pending* last user message)
+# Render prior history (everything except a *pending* last user)
 # -----------------------------
 pending_user = None
 messages_to_render = st.session_state.messages
 
 if messages_to_render and messages_to_render[-1]["role"] == "user" and user_input:
-    # The very last message is the one we just added; we’ll render it separately,
-    # then stream the assistant right after it.
     pending_user = messages_to_render[-1]
     messages_to_render = messages_to_render[:-1]
 
-# Draw historical messages (with feedback on assistants)
 for i in range(len(messages_to_render)):
     render_message_with_feedback(i)
 
-# If there’s a pending user message (the new question), show it now at the *bottom*
+# Show the pending user message at the bottom
 if pending_user:
     with st.chat_message("user"):
         st.markdown(pending_user["content"])
 
 # -----------------------------
-# Stream assistant at the bottom, then append to history
+# Stream assistant at the bottom (no duplicate re-render)
 # -----------------------------
 if pending_user:
     with st.chat_message("assistant"):
@@ -202,8 +201,9 @@ if pending_user:
         reply_text = "".join(full_reply).strip() or "⚠️ Model returned no content."
         placeholder.markdown(reply_text)
 
-    # Save assistant message to history
-    st.session_state.messages.append({"role": "assistant", "content": reply_text})
+        # Append to history *before* drawing feedback so keys/indices are stable
+        st.session_state.messages.append({"role": "assistant", "content": reply_text})
+        new_idx = len(st.session_state.messages) - 1
 
-    # Immediately show feedback UI for this just-streamed reply
-    render_message_with_feedback(len(st.session_state.messages) - 1)
+        # Draw ONLY feedback controls here to avoid duplicating the content
+        render_feedback_inline(new_idx)
