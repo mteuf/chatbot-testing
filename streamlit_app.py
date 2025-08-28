@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import json
+import time
 from datetime import datetime
 import databricks.sql
 import threading
@@ -8,8 +9,8 @@ import threading
 # -----------------------------
 # Streamlit App Setup
 # -----------------------------
-st.set_page_config(page_title="Field Staff Chatbot 2")
-st.title("Field Staff Chatbot")
+st.set_page_config(page_title="Field Staff Chatbot")
+st.title("Field Staff Chatbot 3")
 
 # -----------------------------
 # Session State Initialization
@@ -51,6 +52,19 @@ def store_feedback(question, answer, score, comment, category):
         print(f"⚠️ Could not store feedback: {e}")
 
 # -----------------------------
+# Function to Simulate Token Streaming
+# -----------------------------
+def simulate_streaming_text(full_text, placeholder, delay=0.02):
+    """Render tokens progressively when endpoint doesn't stream."""
+    reply = ""
+    for token in full_text.split():
+        reply += token + " "
+        placeholder.markdown(reply + "▌")
+        time.sleep(delay)
+    placeholder.markdown(reply)
+    return reply
+
+# -----------------------------
 # Handle User Input + Streaming
 # -----------------------------
 if user_input := st.chat_input("Ask a question..."):
@@ -77,25 +91,45 @@ if user_input := st.chat_input("Ask a question..."):
             if response.status_code != 200:
                 reply = f"❌ Request failed with {response.status_code}: {response.text}"
             else:
-                # Create a placeholder for assistant reply
+                # Create placeholder for assistant reply
                 message_placeholder = st.chat_message("assistant").empty()
 
-                # Stream and display tokens as they arrive
+                got_streaming = False
                 for line in response.iter_lines():
                     if line:
                         try:
                             data = json.loads(line.decode("utf-8"))
+
+                            # Handle OpenAI-style streaming JSON
                             if "choices" in data and len(data["choices"]) > 0:
                                 delta = data["choices"][0].get("delta", {})
                                 token = delta.get("content", "")
                                 if token:
+                                    got_streaming = True
                                     reply += token
-                                    message_placeholder.markdown(reply + "▌")  # Typing cursor
+                                    message_placeholder.markdown(reply + "▌")
                         except json.JSONDecodeError:
                             continue
 
-                # Finalize full reply
-                message_placeholder.markdown(reply)
+                # Fallback: if we got no streaming chunks, parse full JSON
+                if not got_streaming:
+                    try:
+                        data = response.json()
+                        if "choices" in data and isinstance(data["choices"], list):
+                            reply = data["choices"][0]["message"]["content"]
+                        elif isinstance(data, str):
+                            reply = data
+                        else:
+                            reply = "⚠️ Unexpected response format."
+                    except Exception:
+                        reply = response.text or "⚠️ Could not parse model response."
+
+                    # Simulate streaming for better UX
+                    reply = simulate_streaming_text(reply, message_placeholder)
+
+                else:
+                    # Finalize display for real streaming
+                    message_placeholder.markdown(reply)
 
     except requests.exceptions.RequestException as e:
         reply = f"❌ Connection error: {e}"
