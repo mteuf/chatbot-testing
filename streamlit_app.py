@@ -8,6 +8,23 @@ st.set_page_config(page_title="Field Staff Chatbot")
 st.title("Field Staff Chatbot 4")
 
 # -----------------------------
+# Typing indicator CSS (inject every run so it always animates)
+# -----------------------------
+TYPING_CSS = """
+<style>
+.typing-dots { display:inline-flex; align-items:center; gap:.35rem; opacity:0.9; }
+.typing-dots .dot {
+  width:.38rem; height:.38rem; border-radius:50%;
+  background: currentColor; opacity:.25; animation: bounce 1s infinite ease-in-out;
+}
+.typing-dots .dot:nth-child(2){ animation-delay:.2s }
+.typing-dots .dot:nth-child(3){ animation-delay:.4s }
+@keyframes bounce { 0%,80%,100%{transform:translateY(0); opacity:.25} 40%{transform:translateY(-.25rem); opacity:1} }
+</style>
+"""
+st.markdown(TYPING_CSS, unsafe_allow_html=True)
+
+# -----------------------------
 # Session state
 # -----------------------------
 if "messages" not in st.session_state:
@@ -87,27 +104,6 @@ def stream_databricks_chat(messages):
         yield f"\n\n❌ Connection error while streaming: {e}"
 
 # -----------------------------
-# Typing indicator (CSS + one-shot injector)
-# -----------------------------
-TYPING_CSS = """
-<style>
-.typing-dots { display:inline-flex; align-items:center; gap:.35rem; font-size:0.95rem; opacity:0.85; }
-.typing-dots .label { opacity:0.7; }
-.typing-dots .dot {
-  width:.38rem; height:.38rem; border-radius:50%;
-  background: currentColor; opacity:.25; animation: bounce 1s infinite ease-in-out;
-}
-.typing-dots .dot:nth-child(2){ animation-delay:.2s }
-.typing-dots .dot:nth-child(3){ animation-delay:.4s }
-@keyframes bounce { 0%,80%,100%{transform:translateY(0); opacity:.25} 40%{transform:translateY(-.25rem); opacity:1} }
-</style>
-"""
-def inject_typing_css_once():
-    if not st.session_state.get("_typing_css_injected"):
-        st.session_state["_typing_css_injected"] = True
-        st.markdown(TYPING_CSS, unsafe_allow_html=True)
-
-# -----------------------------
 # Feedback renderers
 # -----------------------------
 def render_feedback_inline(idx: int):
@@ -158,20 +154,19 @@ def render_feedback_inline(idx: int):
                         daemon=True
                     ).start()
                     st.success("🎉 Thanks for your feedback!")
-
         elif st.session_state.get(feedback_key) == "thumbs_up":
             with st.form(f"thumbs_up_form_{idx}"):
                 feedback_comment = st.text_area("Please provide any additional thoughts (optional)", key=f"comment_{idx}")
                 submitted_up = st.form_submit_button("Submit Feedback 👍")
-            if submitted_up:
-                st.session_state.pending_feedback = None
-                st.toast("✅ Thanks for sharing more detail!")
-                threading.Thread(
-                    target=store_feedback,
-                    args=(question, msg["content"], "thumbs_up", feedback_comment, ""),
-                    daemon=True
-                ).start()
-                st.success("🎉 Thanks for your feedback!")
+                if submitted_up:
+                    st.session_state.pending_feedback = None
+                    st.toast("✅ Thanks for sharing more detail!")
+                    threading.Thread(
+                        target=store_feedback,
+                        args=(question, msg["content"], "thumbs_up", feedback_comment, ""),
+                        daemon=True
+                    ).start()
+                    st.success("🎉 Thanks for your feedback!")
 
 def render_message_with_feedback(idx: int):
     """Render a message and, if assistant, its feedback UI (used for history only)."""
@@ -209,36 +204,31 @@ if pending_user:
         st.markdown(pending_user["content"])
 
 # -----------------------------
-# Stream assistant at the bottom with a *single* placeholder:
-# 1) show bouncing "Thinking…" first
-# 2) replace with tokens when they arrive (no blank bubble)
+# Stream assistant at the bottom with a single placeholder:
+#   - show bouncing ellipsis only (no "Thinking" text)
+#   - replace with tokens as they arrive (no blank bubble, no duplicates)
 # -----------------------------
 if pending_user:
     with st.chat_message("assistant"):
-        inject_typing_css_once()
         bubble = st.empty()  # one placeholder for indicator -> streamed content
 
-        # Show animated indicator immediately
+        # Show animated dots immediately (no label)
         bubble.markdown(
-            '<div class="typing-dots"><span class="label">Thinking</span>'
+            '<div class="typing-dots" role="status" aria-label="Assistant is typing">'
             '<span class="dot"></span><span class="dot"></span><span class="dot"></span></div>',
             unsafe_allow_html=True
         )
 
         full_reply = []
-        got_first_token = False
-
         for token in stream_databricks_chat(st.session_state.messages):
             full_reply.append(token)
-            # On the very first token, replace the indicator with content
-            bubble.markdown("".join(full_reply))
-            got_first_token = True
+            bubble.markdown("".join(full_reply))  # replaces dots on first token
 
-        # Finalize content
+        # Finalize content (if no tokens, still replace dots with fallback)
         reply_text = "".join(full_reply).strip() or "⚠️ Model returned no content."
-        bubble.markdown(reply_text)  # replaces indicator if no tokens ever arrived
+        bubble.markdown(reply_text)
 
-        # Persist + inline feedback (no duplicate render)
+        # Persist + inline feedback (no duplicate re-render)
         st.session_state.messages.append({"role": "assistant", "content": reply_text})
         new_idx = len(st.session_state.messages) - 1
         render_feedback_inline(new_idx)
