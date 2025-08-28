@@ -166,4 +166,44 @@ user_input = st.chat_input("Ask a question...")
 
 # If new input, append it to history immediately so it renders below
 if user_input:
-    st.session_state.messages.append({"role_
+    st.session_state.messages.append({"role": "user", "content": user_input})
+
+# -----------------------------
+# Render existing history (except a *pending* last user message)
+# -----------------------------
+pending_user = None
+messages_to_render = st.session_state.messages
+
+if messages_to_render and messages_to_render[-1]["role"] == "user" and user_input:
+    # The very last message is the one we just added; we’ll render it separately,
+    # then stream the assistant right after it.
+    pending_user = messages_to_render[-1]
+    messages_to_render = messages_to_render[:-1]
+
+# Draw historical messages (with feedback on assistants)
+for i in range(len(messages_to_render)):
+    render_message_with_feedback(i)
+
+# If there’s a pending user message (the new question), show it now at the *bottom*
+if pending_user:
+    with st.chat_message("user"):
+        st.markdown(pending_user["content"])
+
+# -----------------------------
+# Stream assistant at the bottom, then append to history
+# -----------------------------
+if pending_user:
+    with st.chat_message("assistant"):
+        placeholder = st.empty()
+        full_reply = []
+        for token in stream_databricks_chat(st.session_state.messages):
+            full_reply.append(token)
+            placeholder.markdown("".join(full_reply))
+        reply_text = "".join(full_reply).strip() or "⚠️ Model returned no content."
+        placeholder.markdown(reply_text)
+
+    # Save assistant message to history
+    st.session_state.messages.append({"role": "assistant", "content": reply_text})
+
+    # Immediately show feedback UI for this just-streamed reply
+    render_message_with_feedback(len(st.session_state.messages) - 1)
